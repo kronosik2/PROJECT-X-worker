@@ -24,11 +24,12 @@ export default function LoginPage() {
       const { error } = await supabase.auth.signUp({
         email,
         password,
-        options: { { data: { name, role: 'worker' } }
-        
+        options: {
+          data: { name, role: 'worker' }
+        }
       });
       if (error) alert(error.message);
-      else alert('Проверьте почту для подтверждения');
+      else alert('Регистрация успешна! Теперь войдите');
     }
     setLoading(false);
   }
@@ -36,12 +37,12 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <form onSubmit={handleSubmit} className="bg-white p-8 rounded-lg shadow-md w-96">
-        <h1 className="text-2xl font-bold mb-6">{isLogin ? 'Вход' : 'Регистрация'}</h1>
+        <h1 className="text-2xl font-bold mb-6">{isLogin ? 'Вход' : 'Регистрация грузчика'}</h1>
         
         {!isLogin && (
           <input
             type="text"
-            placeholder="Имя"
+            placeholder="Ваше имя"
             value={name}
             onChange={(e) => setName(e.target.value)}
             className="w-full p-2 mb-3 border rounded"
