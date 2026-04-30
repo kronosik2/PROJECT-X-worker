@@ -9,67 +9,97 @@ export default function WorkerPage() {
   const [loading, setLoading] = useState(false);
   const [responding, setResponding] = useState<string | null>(null);
   const [balance, setBalance] = useState(0);
+  
+  // Состояния для модалки регистрации
+  const [showRegister, setShowRegister] = useState(false);
+  const [registerName, setRegisterName] = useState('');
+  const [registerAge, setRegisterAge] = useState('');
+  const [registerSelfEmployed, setRegisterSelfEmployed] = useState(false);
+  const [registerBio, setRegisterBio] = useState('');
 
-  const login = async () => {
+  // Вход по телефону
+  const handleLogin = async () => {
     if (!phone || phone.length < 6) {
       alert('Введите корректный телефон');
       return;
     }
     
-    // Ищем грузчика
-    let { data: existing } = await supabase
+    const { data: existing, error } = await supabase
       .from('workers')
       .select('*')
       .eq('phone', phone)
       .maybeSingle();
     
-    if (existing) {
-      setWorker(existing);
-      await loadBalance(existing.id);
+    if (error) {
+      alert('Ошибка: ' + error.message);
       return;
     }
     
-    // Новый грузчик
-    const name = prompt('Введите ваше имя:');
-    if (!name) return;
+    if (existing) {
+      // Грузчик найден → вход
+      setWorker(existing);
+      await loadBalance(existing.id);
+    } else {
+      // Грузчик не найден → предложить регистрацию
+      setShowRegister(true);
+    }
+  };
+
+  // Регистрация нового грузчика
+  const handleRegister = async () => {
+    if (!registerName.trim()) {
+      alert('Введите имя');
+      return;
+    }
+    if (!registerAge || parseInt(registerAge) < 18) {
+      alert('Введите корректный возраст (должно быть 18+)');
+      return;
+    }
     
     const { data: newWorker, error } = await supabase
       .from('workers')
-      .insert([{ phone, name, rating: 5, total_jobs: 0, is_active: true }])
+      .insert([{
+        phone,
+        name: registerName,
+        age: parseInt(registerAge),
+        is_self_employed: registerSelfEmployed,
+        bio: registerBio || null,
+        rating: 5,
+        total_jobs: 0,
+        is_active: true
+      }])
       .select()
       .single();
     
     if (error) {
-      if (error.code === '23505') {
-        const { data: retryWorker } = await supabase
-          .from('workers')
-          .select('*')
-          .eq('phone', phone)
-          .single();
-        if (retryWorker) {
-          setWorker(retryWorker);
-          await loadBalance(retryWorker.id);
-        }
-      } else {
-        alert('Ошибка: ' + error.message);
-      }
+      alert('Ошибка регистрации: ' + error.message);
       return;
     }
     
-    if (newWorker) {
-      setWorker(newWorker);
-      await loadBalance(newWorker.id);
-    }
+    // Создаём кошелёк для нового грузчика
+    await supabase
+      .from('wallets')
+      .insert([{ worker_id: newWorker.id, balance: 100, reserved: 0 }]);
+    
+    setWorker(newWorker);
+    setBalance(100);
+    setShowRegister(false);
+    
+    // Очищаем форму регистрации
+    setRegisterName('');
+    setRegisterAge('');
+    setRegisterSelfEmployed(false);
+    setRegisterBio('');
   };
 
   const loadBalance = async (workerId: string) => {
-    const { data: wallet, error } = await supabase
+    const { data: wallet } = await supabase
       .from('wallets')
       .select('balance, reserved')
       .eq('worker_id', workerId)
       .maybeSingle();
     
-    if (!error && wallet) {
+    if (wallet) {
       setBalance(wallet.balance - (wallet.reserved || 0));
     } else {
       setBalance(100);
@@ -129,6 +159,7 @@ export default function WorkerPage() {
     }
   }, [worker]);
 
+  // Экран входа / регистрации
   if (!worker) {
     return (
       <div style={{ maxWidth: '400px', margin: '100px auto', padding: '20px' }}>
@@ -145,24 +176,94 @@ export default function WorkerPage() {
           />
           
           <button
-            onClick={login}
-            style={{ width: '100%', padding: '14px', background: '#0f172a', color: 'white', border: 'none', borderRadius: '40px', fontSize: '16px', cursor: 'pointer' }}
+            onClick={handleLogin}
+            style={{ width: '100%', padding: '14px', background: '#0f172a', color: 'white', border: 'none', borderRadius: '40px', fontSize: '16px', cursor: 'pointer', marginBottom: '12px' }}
           >
-            Войти / Зарегистрироваться
+            🔑 Войти
+          </button>
+          
+          <button
+            onClick={() => setShowRegister(true)}
+            style={{ width: '100%', padding: '14px', background: 'transparent', color: '#0f172a', border: '1px solid #0f172a', borderRadius: '40px', fontSize: '16px', cursor: 'pointer' }}
+          >
+            📝 Зарегистрироваться
           </button>
         </div>
+
+        {/* Модалка регистрации */}
+        {showRegister && (
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+            <div style={{ background: 'white', borderRadius: '32px', padding: '32px', maxWidth: '400px', width: '90%' }}>
+              <h2 style={{ marginBottom: '20px' }}>📝 Регистрация</h2>
+              <p style={{ marginBottom: '16px', color: '#64748b' }}>Телефон: {phone}</p>
+              
+              <input
+                type="text"
+                placeholder="Имя *"
+                value={registerName}
+                onChange={(e) => setRegisterName(e.target.value)}
+                style={{ width: '100%', padding: '12px', borderRadius: '40px', border: '1px solid #e2e8f0', marginBottom: '12px' }}
+              />
+              
+              <input
+                type="number"
+                placeholder="Возраст *"
+                value={registerAge}
+                onChange={(e) => setRegisterAge(e.target.value)}
+                style={{ width: '100%', padding: '12px', borderRadius: '40px', border: '1px solid #e2e8f0', marginBottom: '12px' }}
+              />
+              
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                <input
+                  type="checkbox"
+                  checked={registerSelfEmployed}
+                  onChange={(e) => setRegisterSelfEmployed(e.target.checked)}
+                />
+                Я самозанятый
+              </label>
+              
+              <textarea
+                placeholder="О себе (опыт, транспорт, инвентарь...)"
+                value={registerBio}
+                onChange={(e) => setRegisterBio(e.target.value)}
+                rows={3}
+                style={{ width: '100%', padding: '12px', borderRadius: '24px', border: '1px solid #e2e8f0', marginBottom: '16px' }}
+              />
+              
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <button
+                  onClick={handleRegister}
+                  style={{ flex: 1, padding: '12px', background: '#22c55e', color: 'white', border: 'none', borderRadius: '40px', cursor: 'pointer' }}
+                >
+                  Зарегистрироваться
+                </button>
+                <button
+                  onClick={() => setShowRegister(false)}
+                  style={{ flex: 1, padding: '12px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '40px', cursor: 'pointer' }}
+                >
+                  Отмена
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
 
+  // Основная страница с лентой
   return (
     <div style={{ maxWidth: '800px', margin: '0 auto', padding: '20px' }}>
       <div style={{ background: 'white', borderRadius: '24px', padding: '20px', marginBottom: '24px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
           <div>
-            <h2 style={{ fontSize: '20px', margin: 0 }}>👋 Здравствуйте, {worker.name}</h2>
-            <p style={{ color: '#64748b', margin: '4px 0 0' }}>⭐ {worker.rating} / 5 · Выполнено: {worker.total_jobs || 0}</p>
-            <p style={{ color: '#22c55e', margin: '4px 0 0', fontWeight: 'bold' }}>💰 Доступно: {balance} ₽</p>
+            <h2 style={{ fontSize: '20px', margin: 0 }}>👋 {worker.name}, {worker.age} лет</h2>
+            <p style={{ color: '#64748b', margin: '4px 0 0' }}>
+              ⭐ {worker.rating} / 5 · Выполнено: {worker.total_jobs || 0}
+              {worker.is_self_employed && <span style={{ marginLeft: '8px' }}>✅ Самозанятый</span>}
+            </p>
+            {worker.bio && <p style={{ fontSize: '13px', color: '#475569', marginTop: '8px' }}>📝 {worker.bio}</p>}
+            <p style={{ color: '#22c55e', margin: '8px 0 0', fontWeight: 'bold' }}>💰 Доступно: {balance} ₽</p>
           </div>
           <button
             onClick={() => setWorker(null)}
@@ -175,10 +276,7 @@ export default function WorkerPage() {
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <h1 style={{ fontSize: '24px', margin: 0 }}>🚛 Лента заказов</h1>
-        <button
-          onClick={loadOrders}
-          style={{ padding: '8px 20px', background: '#e2e8f0', border: 'none', borderRadius: '40px', cursor: 'pointer' }}
-        >
+        <button onClick={loadOrders} style={{ padding: '8px 20px', background: '#e2e8f0', border: 'none', borderRadius: '40px', cursor: 'pointer' }}>
           🔄 Обновить
         </button>
       </div>
