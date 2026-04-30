@@ -124,13 +124,13 @@ export default function WorkerPage() {
       return;
     }
     if (balance < 10) {
-      alert('❌ Недостаточно средств');
+      alert('❌ Недостаточно средств (нужно 10₽ для резерва)');
       return;
     }
     
     const priceOffer = prompt('Ваша цена (₽):');
     if (!priceOffer || isNaN(parseInt(priceOffer))) return;
-    const comment = prompt('Комментарий (необязательно):');
+    const comment = prompt('Комментарий для клиента (необязательно):');
     setResponding(orderId);
     
     const { error } = await supabase.from('responses').insert([{
@@ -141,43 +141,47 @@ export default function WorkerPage() {
       worker_rating: worker.rating,
       price_offer: parseInt(priceOffer),
       comment: comment || '',
-      worker_status: 'pending'
+      worker_status: 'pending',
+      status: 'pending'
     }]);
     
     setResponding(null);
-    if (error) alert('Ошибка: ' + error.message);
-    else {
-      alert('✅ Отклик отправлен');
+    if (error) {
+      alert('Ошибка: ' + error.message);
+    } else {
+      alert('✅ Отклик отправлен! 10₽ зарезервировано');
       await loadBalance(worker.id);
       await loadActiveResponsesCount(worker.id);
-      await loadMyOrders();
+      await loadOrders();      // обновляем ленту (заказ пропадёт)
+      await loadMyOrders();    // обновляем мои заказы (заказ появится)
     }
   };
 
   const confirmOrder = async (responseId: string, orderId: string) => {
     await supabase.from('responses').update({ worker_status: 'confirmed' }).eq('id', responseId);
     await supabase.from('orders').update({ status: 'in_progress' }).eq('id', orderId);
-    alert('✅ Заказ подтверждён');
+    alert('✅ Заказ подтверждён! Приступайте к работе');
     await loadMyOrders();
     await loadOrders();
   };
 
   const completeOrder = async (responseId: string, orderId: string) => {
-    if (!confirm('Завершить заказ?')) return;
+    if (!confirm('Завершить заказ? Клиент получит уведомление')) return;
     await supabase.from('responses').update({ worker_status: 'completed' }).eq('id', responseId);
     await supabase.from('orders').update({ status: 'completed' }).eq('id', orderId);
-    alert('✅ Заказ завершён');
+    alert('✅ Заказ завершён! Спасибо за работу');
     await loadActiveResponsesCount(worker.id);
     await loadMyOrders();
     await loadOrders();
   };
 
   const cancelOrder = async (responseId: string, orderId: string) => {
-    if (!confirm('Отменить заказ?')) return;
+    if (!confirm('Отменить заказ? Деньги вернутся на баланс')) return;
     await supabase.from('responses').update({ worker_status: 'cancelled' }).eq('id', responseId);
     await supabase.from('orders').update({ status: 'open' }).eq('id', orderId);
-    alert('❌ Заказ отменён');
+    alert('❌ Заказ отменён, деньги возвращены');
     await loadActiveResponsesCount(worker.id);
+    await loadBalance(worker.id);
     await loadMyOrders();
     await loadOrders();
   };
@@ -242,20 +246,31 @@ export default function WorkerPage() {
     return (
       <div style={{ maxWidth: '450px', margin: '60px auto', padding: '20px' }}>
         <div style={{ background: 'white', borderRadius: '32px', padding: '32px', boxShadow: '0 8px 20px rgba(0,0,0,0.1)' }}>
-          <h1>👷 ПРОЕКТ X</h1>
-          <p>Вход для исполнителей</p>
-          <input type="tel" placeholder="+7 (999) 123-45-67" value={phone} onChange={(e) => { setPhone(e.target.value); validatePhone(e.target.value); }} style={{ width: '100%', padding: '14px', borderRadius: '40px', border: phoneError ? '2px solid #ef4444' : '1px solid #e2e8f0', marginBottom: '8px' }} />
-          {phoneError && <p style={{ color: '#ef4444', fontSize: '13px' }}>{phoneError}</p>}
-          <p style={{ fontSize: '12px', color: '#64748b' }}>📌 Пример: +79091234567</p>
-          <button onClick={handleLogin} disabled={loginLoading} style={{ width: '100%', padding: '14px', background: '#0f172a', color: 'white', borderRadius: '40px', marginBottom: '12px' }}>{loginLoading ? '⏳ Проверка...' : '🔑 Войти'}</button>
+          <h1 style={{ fontSize: '28px', marginBottom: '8px' }}>👷 ПРОЕКТ X</h1>
+          <p style={{ color: '#64748b', marginBottom: '24px' }}>Вход для исполнителей</p>
+          
+          <input
+            type="tel"
+            placeholder="+7 (999) 123-45-67"
+            value={phone}
+            onChange={(e) => { setPhone(e.target.value); validatePhone(e.target.value); }}
+            style={{ width: '100%', padding: '14px', borderRadius: '40px', border: phoneError ? '2px solid #ef4444' : '1px solid #e2e8f0', marginBottom: '8px', fontSize: '16px' }}
+          />
+          {phoneError && <p style={{ color: '#ef4444', fontSize: '13px', marginBottom: '16px' }}>{phoneError}</p>}
+          <p style={{ color: '#64748b', fontSize: '12px', marginBottom: '16px' }}>📌 Пример: +79091234567 или 89091234567</p>
+          
+          <button onClick={handleLogin} disabled={loginLoading} style={{ width: '100%', padding: '14px', background: '#0f172a', color: 'white', border: 'none', borderRadius: '40px', fontSize: '16px', cursor: loginLoading ? 'not-allowed' : 'pointer', opacity: loginLoading ? 0.6 : 1, marginBottom: '12px' }}>
+            {loginLoading ? '⏳ Проверка...' : '🔑 Войти'}
+          </button>
+          
           {showRegisterForm && (
             <div style={{ marginTop: '20px', borderTop: '1px solid #e2e8f0', paddingTop: '20px' }}>
-              <h3>📝 Создать аккаунт</h3>
+              <h3 style={{ marginBottom: '16px' }}>📝 Создать аккаунт</h3>
               <input type="text" placeholder="Имя *" value={registerName} onChange={(e) => setRegisterName(e.target.value)} style={{ width: '100%', padding: '12px', borderRadius: '40px', border: '1px solid #e2e8f0', marginBottom: '12px' }} />
               <input type="number" placeholder="Возраст *" value={registerAge} onChange={(e) => setRegisterAge(e.target.value)} style={{ width: '100%', padding: '12px', borderRadius: '40px', border: '1px solid #e2e8f0', marginBottom: '12px' }} />
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}><input type="checkbox" checked={registerSelfEmployed} onChange={(e) => setRegisterSelfEmployed(e.target.checked)} /> Я самозанятый</label>
-              <textarea placeholder="О себе" value={registerBio} onChange={(e) => setRegisterBio(e.target.value)} rows={3} style={{ width: '100%', padding: '12px', borderRadius: '24px', border: '1px solid #e2e8f0', marginBottom: '16px' }} />
-              <button onClick={handleRegister} disabled={registerLoading} style={{ width: '100%', padding: '12px', background: '#22c55e', color: 'white', borderRadius: '40px' }}>{registerLoading ? '⏳ Регистрация...' : '✅ Создать аккаунт'}</button>
+              <textarea placeholder="О себе (опыт, транспорт, инвентарь...)" value={registerBio} onChange={(e) => setRegisterBio(e.target.value)} rows={3} style={{ width: '100%', padding: '12px', borderRadius: '24px', border: '1px solid #e2e8f0', marginBottom: '16px' }} />
+              <button onClick={handleRegister} disabled={registerLoading} style={{ width: '100%', padding: '12px', background: '#22c55e', color: 'white', border: 'none', borderRadius: '40px', cursor: registerLoading ? 'not-allowed' : 'pointer', opacity: registerLoading ? 0.6 : 1 }}>{registerLoading ? '⏳ Регистрация...' : '✅ Создать аккаунт'}</button>
             </div>
           )}
         </div>
@@ -265,13 +280,13 @@ export default function WorkerPage() {
 
   return (
     <div style={{ maxWidth: '800px', margin: '0 auto', padding: '20px' }}>
-      <div style={{ background: 'white', borderRadius: '24px', padding: '20px', marginBottom: '24px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ background: 'white', borderRadius: '24px', padding: '20px', marginBottom: '24px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
           <div>
-            <h2>👋 {worker.name}, {worker.age} лет</h2>
-            <p>⭐ {worker.rating}/5 · Выполнено: {worker.total_jobs || 0}</p>
-            <p>💰 Доступно: {balance} ₽</p>
-            <p>📋 Активных откликов: {activeResponsesCount}/{MAX_ACTIVE_RESPONSES}</p>
+            <h2 style={{ fontSize: '20px', margin: 0 }}>👋 {worker.name}, {worker.age} лет</h2>
+            <p style={{ color: '#64748b', margin: '4px 0 0' }}>⭐ {worker.rating} / 5 · Выполнено: {worker.total_jobs || 0}</p>
+            <p style={{ color: '#22c55e', margin: '8px 0 0', fontWeight: 'bold' }}>💰 Доступно: {balance} ₽</p>
+            <p style={{ fontSize: '13px', color: activeResponsesCount >= MAX_ACTIVE_RESPONSES ? '#ef4444' : '#22c55e', marginTop: '4px' }}>📋 Активных откликов: {activeResponsesCount}/{MAX_ACTIVE_RESPONSES}</p>
           </div>
           <button onClick={() => setWorker(null)} style={{ padding: '8px 20px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '40px', cursor: 'pointer' }}>Выход</button>
         </div>
@@ -284,15 +299,20 @@ export default function WorkerPage() {
 
       {activeTab === 'feed' && (
         <>
+          <button onClick={loadOrders} style={{ marginBottom: '20px', padding: '8px 20px', background: '#e2e8f0', border: 'none', borderRadius: '40px', cursor: 'pointer' }}>🔄 Обновить</button>
           {loading && <p>⏳ Загрузка...</p>}
-          {!loading && orders.length === 0 && <p>🤷 Нет открытых заказов</p>}
+          {!loading && orders.length === 0 && <p style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>🤷 Нет открытых заказов</p>}
           {orders.map(order => (
-            <div key={order.id} style={{ background: 'white', borderRadius: '24px', padding: '20px', marginBottom: '16px', border: '1px solid #e2e8f0' }}>
-              <h3>📍 {order.address}</h3>
-              <p>{order.work_description}</p>
-              <p>💰 {order.tariff === 'hourly' ? `${order.hourly_rate} ₽/час` : `${order.fixed_budget} ₽`}</p>
-              <p>📅 {new Date(order.time_slot).toLocaleString()}</p>
-              <button onClick={() => respondToOrder(order.id)} disabled={responding === order.id || activeResponsesCount >= MAX_ACTIVE_RESPONSES || balance < 10} style={{ padding: '10px 20px', background: '#0f172a', color: 'white', border: 'none', borderRadius: '40px', cursor: 'pointer' }}>{responding === order.id ? 'Отправка...' : '💬 Откликнуться'}</button>
+            <div key={order.id} style={{ background: 'white', borderRadius: '24px', padding: '20px', marginBottom: '16px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)', border: '1px solid #e2e8f0' }}>
+              <h3 style={{ marginBottom: '8px' }}>📍 {order.address}</h3>
+              <p style={{ color: '#475569', marginBottom: '12px' }}>{order.work_description}</p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', marginBottom: '16px' }}>
+                <span style={{ background: '#f1f5f9', padding: '4px 12px', borderRadius: '40px', fontSize: '14px' }}>{order.tariff === 'hourly' ? `💰 ${order.hourly_rate} ₽/час` : `💰 Фиксированный: ${order.fixed_budget} ₽`}</span>
+                <span style={{ background: '#f1f5f9', padding: '4px 12px', borderRadius: '40px', fontSize: '14px' }}>📅 {new Date(order.time_slot).toLocaleString()}</span>
+              </div>
+              <button onClick={() => respondToOrder(order.id)} disabled={responding === order.id || activeResponsesCount >= MAX_ACTIVE_RESPONSES || balance < 10} style={{ padding: '10px 20px', background: '#0f172a', color: 'white', border: 'none', borderRadius: '40px', cursor: (responding === order.id || activeResponsesCount >= MAX_ACTIVE_RESPONSES || balance < 10) ? 'not-allowed' : 'pointer', opacity: (responding === order.id || activeResponsesCount >= MAX_ACTIVE_RESPONSES || balance < 10) ? 0.5 : 1 }}>
+                {responding === order.id ? 'Отправка...' : balance < 10 ? '💰 Недостаточно средств (10₽)' : '💬 Откликнуться (10₽)'}
+              </button>
             </div>
           ))}
         </>
@@ -300,24 +320,30 @@ export default function WorkerPage() {
 
       {activeTab === 'my' && (
         <>
+          <button onClick={loadMyOrders} style={{ marginBottom: '20px', padding: '8px 20px', background: '#e2e8f0', border: 'none', borderRadius: '40px', cursor: 'pointer' }}>🔄 Обновить</button>
           {loadingMy && <p>⏳ Загрузка...</p>}
-          {!loadingMy && myOrders.length === 0 && <p>🤷 У вас пока нет откликов</p>}
+          {!loadingMy && myOrders.length === 0 && <p style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>🤷 У вас пока нет откликов</p>}
           {myOrders.map((item: any) => {
             const order = item.order;
             const status = item.worker_status;
-            let statusText = '', statusColor = '';
-            let buttons = null;
-            if (status === 'pending') { statusText = '⏳ Ожидает ответа клиента'; statusColor = '#f59e0b'; buttons = <button onClick={() => cancelOrder(item.id, order.id)} style={{ padding: '8px 16px', background: '#ef4444', color: 'white', borderRadius: '40px', cursor: 'pointer' }}>Отменить отклик</button>; }
-            else if (status === 'approved') { statusText = '✅ Клиент выбрал вас! Подтвердите'; statusColor = '#22c55e'; buttons = <button onClick={() => confirmOrder(item.id, order.id)} style={{ padding: '8px 16px', background: '#22c55e', color: 'white', borderRadius: '40px', cursor: 'pointer' }}>Подтвердить заказ</button>; }
-            else if (status === 'confirmed') { statusText = '🚚 В работе'; statusColor = '#3b82f6'; buttons = <button onClick={() => completeOrder(item.id, order.id)} style={{ padding: '8px 16px', background: '#22c55e', color: 'white', borderRadius: '40px', cursor: 'pointer' }}>Завершить заказ</button>; }
-            else if (status === 'completed') { statusText = '✅ Выполнен'; statusColor = '#10b981'; buttons = null; }
+            let statusText = '', statusColor = '', buttons = null;
+            if (status === 'pending') { statusText = '⏳ Ожидает ответа клиента'; statusColor = '#f59e0b'; buttons = <button onClick={() => cancelOrder(item.id, order.id)} style={{ padding: '8px 16px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '40px', cursor: 'pointer' }}>❌ Отменить отклик</button>; }
+            else if (status === 'approved') { statusText = '✅ Клиент выбрал вас! Подтвердите'; statusColor = '#22c55e'; buttons = <button onClick={() => confirmOrder(item.id, order.id)} style={{ padding: '8px 16px', background: '#22c55e', color: 'white', border: 'none', borderRadius: '40px', cursor: 'pointer' }}>✅ Подтвердить заказ</button>; }
+            else if (status === 'confirmed') { statusText = '🚚 В работе'; statusColor = '#3b82f6'; buttons = <button onClick={() => completeOrder(item.id, order.id)} style={{ padding: '8px 16px', background: '#22c55e', color: 'white', border: 'none', borderRadius: '40px', cursor: 'pointer' }}>🏁 Завершить заказ</button>; }
+            else if (status === 'completed') { statusText = '✅ Выполнен ✓'; statusColor = '#10b981'; buttons = null; }
             else if (status === 'cancelled') { statusText = '❌ Отменён'; statusColor = '#ef4444'; buttons = null; }
             return (
-              <div key={item.id} style={{ background: 'white', borderRadius: '24px', padding: '20px', marginBottom: '16px', border: '1px solid #e2e8f0' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}><span style={{ background: statusColor, padding: '4px 12px', borderRadius: '40px', fontSize: '12px', color: 'white' }}>{statusText}</span><span>💰 {item.price_offer} ₽</span></div>
-                <h3>📍 {order.address}</h3>
-                <p>{order.work_description}</p>
-                <p>📅 {new Date(order.time_slot).toLocaleString()}</p>
+              <div key={item.id} style={{ background: 'white', borderRadius: '24px', padding: '20px', marginBottom: '16px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)', border: '1px solid #e2e8f0' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '12px' }}>
+                  <span style={{ background: statusColor, padding: '4px 12px', borderRadius: '40px', fontSize: '12px', color: 'white' }}>{statusText}</span>
+                  <span style={{ fontWeight: 'bold', color: '#22c55e' }}>💰 {item.price_offer} ₽</span>
+                </div>
+                <h3 style={{ marginBottom: '8px' }}>📍 {order.address}</h3>
+                <p style={{ color: '#475569', marginBottom: '12px' }}>{order.work_description}</p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', marginBottom: '16px' }}>
+                  <span style={{ background: '#f1f5f9', padding: '4px 12px', borderRadius: '40px', fontSize: '14px' }}>📅 {new Date(order.time_slot).toLocaleString()}</span>
+                </div>
+                {item.comment && <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '12px' }}>💬 Ваш комментарий: {item.comment}</p>}
                 {buttons}
               </div>
             );
