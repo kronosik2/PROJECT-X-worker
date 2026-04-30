@@ -9,25 +9,44 @@ export default function WorkerPage() {
   const [loading, setLoading] = useState(false);
   const [responding, setResponding] = useState<string | null>(null);
   const [balance, setBalance] = useState(0);
-  
-  // Состояния для модалки регистрации
-  const [showRegister, setShowRegister] = useState(false);
+
+  // Состояния для регистрации
+  const [showRegisterForm, setShowRegisterForm] = useState(false);
   const [registerName, setRegisterName] = useState('');
   const [registerAge, setRegisterAge] = useState('');
   const [registerSelfEmployed, setRegisterSelfEmployed] = useState(false);
   const [registerBio, setRegisterBio] = useState('');
 
-  // Вход по телефону
+  // Вспомогательная функция: проверка телефона
+  const isValidPhone = (phone: string) => {
+    const cleaned = phone.replace(/\D/g, '');
+    return cleaned.length === 11 && (cleaned[0] === '7' || cleaned[0] === '8');
+  };
+
+  const formatPhoneForDb = (phone: string) => {
+    const cleaned = phone.replace(/\D/g, '');
+    if (cleaned.length === 11 && cleaned[0] === '8') {
+      return '+7' + cleaned.slice(1);
+    }
+    if (cleaned.length === 11 && cleaned[0] === '7') {
+      return '+7' + cleaned.slice(1);
+    }
+    return phone;
+  };
+
+  // Кнопка «Войти»
   const handleLogin = async () => {
-    if (!phone || phone.length < 6) {
-      alert('Введите корректный телефон');
+    if (!isValidPhone(phone)) {
+      alert('Введите корректный номер телефона в формате +79091234567');
       return;
     }
+
+    const formattedPhone = formatPhoneForDb(phone);
     
     const { data: existing, error } = await supabase
       .from('workers')
       .select('*')
-      .eq('phone', phone)
+      .eq('phone', formattedPhone)
       .maybeSingle();
     
     if (error) {
@@ -36,30 +55,37 @@ export default function WorkerPage() {
     }
     
     if (existing) {
-      // Грузчик найден → вход
       setWorker(existing);
       await loadBalance(existing.id);
+      setShowRegisterForm(false);
     } else {
-      // Грузчик не найден → предложить регистрацию
-      setShowRegister(true);
+      setShowRegisterForm(true);
     }
   };
 
-  // Регистрация нового грузчика
+  // Кнопка «Создать аккаунт»
   const handleRegister = async () => {
+    if (!isValidPhone(phone)) {
+      alert('Введите корректный номер телефона');
+      return;
+    }
+    
     if (!registerName.trim()) {
       alert('Введите имя');
       return;
     }
+    
     if (!registerAge || parseInt(registerAge) < 18) {
-      alert('Введите корректный возраст (должно быть 18+)');
+      alert('Возраст должен быть 18+');
       return;
     }
+    
+    const formattedPhone = formatPhoneForDb(phone);
     
     const { data: newWorker, error } = await supabase
       .from('workers')
       .insert([{
-        phone,
+        phone: formattedPhone,
         name: registerName,
         age: parseInt(registerAge),
         is_self_employed: registerSelfEmployed,
@@ -76,16 +102,15 @@ export default function WorkerPage() {
       return;
     }
     
-    // Создаём кошелёк для нового грузчика
     await supabase
       .from('wallets')
       .insert([{ worker_id: newWorker.id, balance: 100, reserved: 0 }]);
     
     setWorker(newWorker);
     setBalance(100);
-    setShowRegister(false);
+    setShowRegisterForm(false);
     
-    // Очищаем форму регистрации
+    // Очищаем форму
     setRegisterName('');
     setRegisterAge('');
     setRegisterSelfEmployed(false);
@@ -101,8 +126,6 @@ export default function WorkerPage() {
     
     if (wallet) {
       setBalance(wallet.balance - (wallet.reserved || 0));
-    } else {
-      setBalance(100);
     }
   };
 
@@ -162,11 +185,12 @@ export default function WorkerPage() {
   // Экран входа / регистрации
   if (!worker) {
     return (
-      <div style={{ maxWidth: '400px', margin: '100px auto', padding: '20px' }}>
+      <div style={{ maxWidth: '450px', margin: '60px auto', padding: '20px' }}>
         <div style={{ background: 'white', borderRadius: '32px', padding: '32px', boxShadow: '0 8px 20px rgba(0,0,0,0.1)' }}>
           <h1 style={{ fontSize: '28px', marginBottom: '8px' }}>👷 ПРОЕКТ X</h1>
           <p style={{ color: '#64748b', marginBottom: '24px' }}>Вход для исполнителей</p>
           
+          <label style={{ fontWeight: 500, marginBottom: 8, display: 'block' }}>📱 Телефон</label>
           <input
             type="tel"
             placeholder="+7 (999) 123-45-67"
@@ -182,32 +206,23 @@ export default function WorkerPage() {
             🔑 Войти
           </button>
           
-          <button
-            onClick={() => setShowRegister(true)}
-            style={{ width: '100%', padding: '14px', background: 'transparent', color: '#0f172a', border: '1px solid #0f172a', borderRadius: '40px', fontSize: '16px', cursor: 'pointer' }}
-          >
-            📝 Зарегистрироваться
-          </button>
-        </div>
-
-        {/* Модалка регистрации */}
-        {showRegister && (
-          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-            <div style={{ background: 'white', borderRadius: '32px', padding: '32px', maxWidth: '400px', width: '90%' }}>
-              <h2 style={{ marginBottom: '20px' }}>📝 Регистрация</h2>
-              <p style={{ marginBottom: '16px', color: '#64748b' }}>Телефон: {phone}</p>
+          {showRegisterForm && (
+            <div style={{ marginTop: '20px', borderTop: '1px solid #e2e8f0', paddingTop: '20px' }}>
+              <h3 style={{ marginBottom: '16px' }}>📝 Создать аккаунт</h3>
               
+              <label style={{ fontWeight: 500, marginBottom: 8, display: 'block' }}>Имя *</label>
               <input
                 type="text"
-                placeholder="Имя *"
+                placeholder="Иван"
                 value={registerName}
                 onChange={(e) => setRegisterName(e.target.value)}
                 style={{ width: '100%', padding: '12px', borderRadius: '40px', border: '1px solid #e2e8f0', marginBottom: '12px' }}
               />
               
+              <label style={{ fontWeight: 500, marginBottom: 8, display: 'block' }}>Возраст *</label>
               <input
                 type="number"
-                placeholder="Возраст *"
+                placeholder="25"
                 value={registerAge}
                 onChange={(e) => setRegisterAge(e.target.value)}
                 style={{ width: '100%', padding: '12px', borderRadius: '40px', border: '1px solid #e2e8f0', marginBottom: '12px' }}
@@ -222,31 +237,24 @@ export default function WorkerPage() {
                 Я самозанятый
               </label>
               
+              <label style={{ fontWeight: 500, marginBottom: 8, display: 'block' }}>О себе</label>
               <textarea
-                placeholder="О себе (опыт, транспорт, инвентарь...)"
+                placeholder="Опыт, транспорт, инвентарь..."
                 value={registerBio}
                 onChange={(e) => setRegisterBio(e.target.value)}
                 rows={3}
                 style={{ width: '100%', padding: '12px', borderRadius: '24px', border: '1px solid #e2e8f0', marginBottom: '16px' }}
               />
               
-              <div style={{ display: 'flex', gap: '12px' }}>
-                <button
-                  onClick={handleRegister}
-                  style={{ flex: 1, padding: '12px', background: '#22c55e', color: 'white', border: 'none', borderRadius: '40px', cursor: 'pointer' }}
-                >
-                  Зарегистрироваться
-                </button>
-                <button
-                  onClick={() => setShowRegister(false)}
-                  style={{ flex: 1, padding: '12px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '40px', cursor: 'pointer' }}
-                >
-                  Отмена
-                </button>
-              </div>
+              <button
+                onClick={handleRegister}
+                style={{ width: '100%', padding: '12px', background: '#22c55e', color: 'white', border: 'none', borderRadius: '40px', cursor: 'pointer' }}
+              >
+                Создать аккаунт
+              </button>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     );
   }
