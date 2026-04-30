@@ -4,11 +4,14 @@ import { supabase } from '@/lib/supabaseClient';
 
 export default function WorkerPage() {
   const [phone, setPhone] = useState('');
+  const [phoneError, setPhoneError] = useState('');
   const [worker, setWorker] = useState<any>(null);
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [responding, setResponding] = useState<string | null>(null);
   const [balance, setBalance] = useState(0);
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [registerLoading, setRegisterLoading] = useState(false);
 
   // Состояния для регистрации
   const [showRegisterForm, setShowRegisterForm] = useState(false);
@@ -17,13 +20,20 @@ export default function WorkerPage() {
   const [registerSelfEmployed, setRegisterSelfEmployed] = useState(false);
   const [registerBio, setRegisterBio] = useState('');
 
-  // Вспомогательная функция: проверка телефона
-  const isValidPhone = (phone: string) => {
+  // Валидация телефона
+  const validatePhone = (phone: string): boolean => {
     const cleaned = phone.replace(/\D/g, '');
-    return cleaned.length === 11 && (cleaned[0] === '7' || cleaned[0] === '8');
+    const isValid = cleaned.length === 11 && (cleaned[0] === '7' || cleaned[0] === '8');
+    
+    if (!isValid && phone.length > 0) {
+      setPhoneError('❌ Неверный формат. Используйте +79091234567 или 89091234567');
+    } else {
+      setPhoneError('');
+    }
+    return isValid;
   };
 
-  const formatPhoneForDb = (phone: string) => {
+  const formatPhoneForDb = (phone: string): string => {
     const cleaned = phone.replace(/\D/g, '');
     if (cleaned.length === 11 && cleaned[0] === '8') {
       return '+7' + cleaned.slice(1);
@@ -36,85 +46,105 @@ export default function WorkerPage() {
 
   // Кнопка «Войти»
   const handleLogin = async () => {
-    if (!isValidPhone(phone)) {
-      alert('Введите корректный номер телефона в формате +79091234567');
+    if (!validatePhone(phone)) {
       return;
     }
-
+    
+    setLoginLoading(true);
     const formattedPhone = formatPhoneForDb(phone);
     
-    const { data: existing, error } = await supabase
-      .from('workers')
-      .select('*')
-      .eq('phone', formattedPhone)
-      .maybeSingle();
-    
-    if (error) {
-      alert('Ошибка: ' + error.message);
-      return;
-    }
-    
-    if (existing) {
-      setWorker(existing);
-      await loadBalance(existing.id);
-      setShowRegisterForm(false);
-    } else {
-      setShowRegisterForm(true);
+    try {
+      const { data: existing, error } = await supabase
+        .from('workers')
+        .select('*')
+        .eq('phone', formattedPhone)
+        .maybeSingle();
+      
+      if (error) {
+        console.error('Ошибка запроса:', error);
+        alert('❌ Ошибка соединения. Проверьте интернет и попробуйте снова.');
+        return;
+      }
+      
+      if (existing) {
+        setWorker(existing);
+        await loadBalance(existing.id);
+        setShowRegisterForm(false);
+      } else {
+        setShowRegisterForm(true);
+      }
+    } catch (err) {
+      console.error('Исключение:', err);
+      alert('❌ Не удалось подключиться к серверу. Попробуйте позже.');
+    } finally {
+      setLoginLoading(false);
     }
   };
 
   // Кнопка «Создать аккаунт»
   const handleRegister = async () => {
-    if (!isValidPhone(phone)) {
-      alert('Введите корректный номер телефона');
+    if (!validatePhone(phone)) {
       return;
     }
     
     if (!registerName.trim()) {
-      alert('Введите имя');
+      alert('❌ Введите имя');
       return;
     }
     
     if (!registerAge || parseInt(registerAge) < 18) {
-      alert('Возраст должен быть 18+');
+      alert('❌ Возраст должен быть 18+');
       return;
     }
     
+    setRegisterLoading(true);
     const formattedPhone = formatPhoneForDb(phone);
     
-    const { data: newWorker, error } = await supabase
-      .from('workers')
-      .insert([{
-        phone: formattedPhone,
-        name: registerName,
-        age: parseInt(registerAge),
-        is_self_employed: registerSelfEmployed,
-        bio: registerBio || null,
-        rating: 5,
-        total_jobs: 0,
-        is_active: true
-      }])
-      .select()
-      .single();
-    
-    if (error) {
-      alert('Ошибка регистрации: ' + error.message);
-      return;
+    try {
+      const { data: newWorker, error } = await supabase
+        .from('workers')
+        .insert([{
+          phone: formattedPhone,
+          name: registerName,
+          age: parseInt(registerAge),
+          is_self_employed: registerSelfEmployed,
+          bio: registerBio || null,
+          rating: 5,
+          total_jobs: 0,
+          is_active: true
+        }])
+        .select()
+        .single();
+      
+      if (error) {
+        if (error.code === '23505') {
+          alert('❌ Этот номер телефона уже зарегистрирован. Войдите.');
+          setShowRegisterForm(false);
+        } else {
+          alert('❌ Ошибка регистрации: ' + error.message);
+        }
+        return;
+      }
+      
+      await supabase
+        .from('wallets')
+        .insert([{ worker_id: newWorker.id, balance: 100, reserved: 0 }]);
+      
+      setWorker(newWorker);
+      setBalance(100);
+      setShowRegisterForm(false);
+      
+      // Очищаем форму
+      setRegisterName('');
+      setRegisterAge('');
+      setRegisterSelfEmployed(false);
+      setRegisterBio('');
+    } catch (err) {
+      console.error('Ошибка регистрации:', err);
+      alert('❌ Не удалось подключиться к серверу. Попробуйте позже.');
+    } finally {
+      setRegisterLoading(false);
     }
-    
-    await supabase
-      .from('wallets')
-      .insert([{ worker_id: newWorker.id, balance: 100, reserved: 0 }]);
-    
-    setWorker(newWorker);
-    setBalance(100);
-    setShowRegisterForm(false);
-    
-    // Очищаем форму
-    setRegisterName('');
-    setRegisterAge('');
-    setRegisterSelfEmployed(false);
-    setRegisterBio('');
   };
 
   const loadBalance = async (workerId: string) => {
@@ -132,15 +162,20 @@ export default function WorkerPage() {
   const loadOrders = async () => {
     if (!worker) return;
     setLoading(true);
-    const { data, error } = await supabase
-      .from('orders')
-      .select('*')
-      .eq('status', 'open')
-      .limit(20)
-      .order('created_at', { ascending: false });
-    
-    if (!error && data) setOrders(data);
-    setLoading(false);
+    try {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('status', 'open')
+        .limit(20)
+        .order('created_at', { ascending: false });
+      
+      if (!error && data) setOrders(data);
+    } catch (err) {
+      console.error('Ошибка загрузки заказов:', err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const respondToOrder = async (orderId: string) => {
@@ -195,15 +230,45 @@ export default function WorkerPage() {
             type="tel"
             placeholder="+7 (999) 123-45-67"
             value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            style={{ width: '100%', padding: '14px', borderRadius: '40px', border: '1px solid #e2e8f0', marginBottom: '16px', fontSize: '16px' }}
+            onChange={(e) => {
+              setPhone(e.target.value);
+              validatePhone(e.target.value);
+            }}
+            style={{ 
+              width: '100%', 
+              padding: '14px', 
+              borderRadius: '40px', 
+              border: phoneError ? '2px solid #ef4444' : '1px solid #e2e8f0',
+              marginBottom: '8px', 
+              fontSize: '16px' 
+            }}
           />
+          {phoneError && (
+            <p style={{ color: '#ef4444', fontSize: '13px', marginBottom: '16px' }}>
+              {phoneError}
+            </p>
+          )}
+          <p style={{ color: '#64748b', fontSize: '12px', marginBottom: '16px' }}>
+            📌 Пример: +79091234567 или 89091234567
+          </p>
           
           <button
             onClick={handleLogin}
-            style={{ width: '100%', padding: '14px', background: '#0f172a', color: 'white', border: 'none', borderRadius: '40px', fontSize: '16px', cursor: 'pointer', marginBottom: '12px' }}
+            disabled={loginLoading}
+            style={{ 
+              width: '100%', 
+              padding: '14px', 
+              background: '#0f172a', 
+              color: 'white', 
+              border: 'none', 
+              borderRadius: '40px', 
+              fontSize: '16px', 
+              cursor: loginLoading ? 'not-allowed' : 'pointer',
+              opacity: loginLoading ? 0.6 : 1,
+              marginBottom: '12px'
+            }}
           >
-            🔑 Войти
+            {loginLoading ? '⏳ Проверка...' : '🔑 Войти'}
           </button>
           
           {showRegisterForm && (
@@ -248,9 +313,19 @@ export default function WorkerPage() {
               
               <button
                 onClick={handleRegister}
-                style={{ width: '100%', padding: '12px', background: '#22c55e', color: 'white', border: 'none', borderRadius: '40px', cursor: 'pointer' }}
+                disabled={registerLoading}
+                style={{ 
+                  width: '100%', 
+                  padding: '12px', 
+                  background: '#22c55e', 
+                  color: 'white', 
+                  border: 'none', 
+                  borderRadius: '40px', 
+                  cursor: registerLoading ? 'not-allowed' : 'pointer',
+                  opacity: registerLoading ? 0.6 : 1
+                }}
               >
-                Создать аккаунт
+                {registerLoading ? '⏳ Регистрация...' : '✅ Создать аккаунт'}
               </button>
             </div>
           )}
