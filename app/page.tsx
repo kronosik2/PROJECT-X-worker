@@ -10,7 +10,6 @@ export default function WorkerPage() {
   const [responding, setResponding] = useState<string | null>(null);
   const [balance, setBalance] = useState(0);
 
-  // Вход / регистрация
   const login = async () => {
     if (!phone || phone.length < 6) {
       alert('Введите корректный телефон');
@@ -26,7 +25,6 @@ export default function WorkerPage() {
     
     if (existing) {
       setWorker(existing);
-      // Загружаем баланс
       const { data: wallet } = await supabase
         .from('wallets')
         .select('balance, reserved')
@@ -48,7 +46,6 @@ export default function WorkerPage() {
     
     if (newWorker) {
       setWorker(newWorker);
-      // Баланс 100р уже создаётся триггером
       const { data: wallet } = await supabase
         .from('wallets')
         .select('balance, reserved')
@@ -58,7 +55,6 @@ export default function WorkerPage() {
     }
   };
 
-  // Загрузка открытых заказов
   const loadOrders = async () => {
     if (!worker) return;
     setLoading(true);
@@ -66,13 +62,13 @@ export default function WorkerPage() {
       .from('orders')
       .select('*')
       .eq('status', 'open')
+      .limit(20)
       .order('created_at', { ascending: false });
     
     if (!error && data) setOrders(data);
     setLoading(false);
   };
 
-  // Отклик на заказ через функцию Supabase
   const respondToOrder = async (orderId: string) => {
     if (!worker) return;
     
@@ -83,7 +79,6 @@ export default function WorkerPage() {
     }
     
     const comment = prompt('Комментарий для клиента (необязательно):');
-    
     setResponding(orderId);
     
     const { data, error } = await supabase.rpc('respond_to_order', {
@@ -101,7 +96,6 @@ export default function WorkerPage() {
       alert(data.error);
     } else {
       alert('✅ Отклик отправлен! 10₽ зарезервировано');
-      // Обновляем баланс
       const { data: wallet } = await supabase
         .from('wallets')
         .select('balance, reserved')
@@ -111,7 +105,6 @@ export default function WorkerPage() {
     }
   };
 
-  // Загружаем заказы при входе
   useEffect(() => {
     if (worker) {
       loadOrders();
@@ -120,7 +113,6 @@ export default function WorkerPage() {
     }
   }, [worker]);
 
-  // Экран входа
   if (!worker) {
     return (
       <div style={{ maxWidth: '400px', margin: '100px auto', padding: '20px' }}>
@@ -147,10 +139,8 @@ export default function WorkerPage() {
     );
   }
 
-  // Основная страница с лентой
   return (
     <div style={{ maxWidth: '800px', margin: '0 auto', padding: '20px' }}>
-      {/* Шапка профиля */}
       <div style={{ background: 'white', borderRadius: '24px', padding: '20px', marginBottom: '24px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
           <div>
@@ -167,7 +157,6 @@ export default function WorkerPage() {
         </div>
       </div>
 
-      {/* Управление */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <h1 style={{ fontSize: '24px', margin: 0 }}>🚛 Лента заказов</h1>
         <button
@@ -178,7 +167,7 @@ export default function WorkerPage() {
         </button>
       </div>
 
-      {loading && <p>Загрузка...</p>}
+      {loading && <p>⏳ Загрузка заказов... (до 10 секунд)</p>}
       
       {!loading && orders.length === 0 && (
         <div style={{ background: '#f8fafc', borderRadius: '24px', padding: '48px', textAlign: 'center' }}>
