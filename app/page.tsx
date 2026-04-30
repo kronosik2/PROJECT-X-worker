@@ -16,8 +16,8 @@ export default function WorkerPage() {
       return;
     }
     
-    // Поиск существующего грузчика
-    const { data: existing } = await supabase
+    // Ищем грузчика
+    let { data: existing } = await supabase
       .from('workers')
       .select('*')
       .eq('phone', phone)
@@ -25,12 +25,7 @@ export default function WorkerPage() {
     
     if (existing) {
       setWorker(existing);
-      const { data: wallet } = await supabase
-        .from('wallets')
-        .select('balance, reserved')
-        .eq('worker_id', existing.id)
-        .single();
-      if (wallet) setBalance(wallet.balance - wallet.reserved);
+      await loadBalance(existing.id);
       return;
     }
     
@@ -38,20 +33,46 @@ export default function WorkerPage() {
     const name = prompt('Введите ваше имя:');
     if (!name) return;
     
-    const { data: newWorker } = await supabase
+    const { data: newWorker, error } = await supabase
       .from('workers')
       .insert([{ phone, name, rating: 5, total_jobs: 0, is_active: true }])
       .select()
       .single();
     
+    if (error) {
+      if (error.code === '23505') {
+        const { data: retryWorker } = await supabase
+          .from('workers')
+          .select('*')
+          .eq('phone', phone)
+          .single();
+        if (retryWorker) {
+          setWorker(retryWorker);
+          await loadBalance(retryWorker.id);
+        }
+      } else {
+        alert('Ошибка: ' + error.message);
+      }
+      return;
+    }
+    
     if (newWorker) {
       setWorker(newWorker);
-      const { data: wallet } = await supabase
-        .from('wallets')
-        .select('balance, reserved')
-        .eq('worker_id', newWorker.id)
-        .single();
-      if (wallet) setBalance(wallet.balance - wallet.reserved);
+      await loadBalance(newWorker.id);
+    }
+  };
+
+  const loadBalance = async (workerId: string) => {
+    const { data: wallet, error } = await supabase
+      .from('wallets')
+      .select('balance, reserved')
+      .eq('worker_id', workerId)
+      .maybeSingle();
+    
+    if (!error && wallet) {
+      setBalance(wallet.balance - (wallet.reserved || 0));
+    } else {
+      setBalance(100);
     }
   };
 
@@ -96,12 +117,7 @@ export default function WorkerPage() {
       alert(data.error);
     } else {
       alert('✅ Отклик отправлен! 10₽ зарезервировано');
-      const { data: wallet } = await supabase
-        .from('wallets')
-        .select('balance, reserved')
-        .eq('worker_id', worker.id)
-        .single();
-      if (wallet) setBalance(wallet.balance - wallet.reserved);
+      await loadBalance(worker.id);
     }
   };
 
@@ -167,7 +183,7 @@ export default function WorkerPage() {
         </button>
       </div>
 
-      {loading && <p>⏳ Загрузка заказов... (до 10 секунд)</p>}
+      {loading && <p>⏳ Загрузка заказов...</p>}
       
       {!loading && orders.length === 0 && (
         <div style={{ background: '#f8fafc', borderRadius: '24px', padding: '48px', textAlign: 'center' }}>
