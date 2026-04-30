@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useUser } from '@clerk/nextjs';
 import { supabase } from '@/lib/supabaseClient';
+import { useRouter } from 'next/navigation';
 
 type Order = {
   id: string;
@@ -15,18 +15,23 @@ type Order = {
 };
 
 export default function WorkerPage() {
-  const { user, isSignedIn } = useUser();
+  const [workerId, setWorkerId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'feed' | 'my'>('feed');
   const [feedOrders, setFeedOrders] = useState<Order[]>([]);
   const [myOrders, setMyOrders] = useState<Order[]>([]);
-  const [workerId, setWorkerId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const router = useRouter();
 
   useEffect(() => {
-    if (isSignedIn && user) {
-      fetchWorkerId();
-    }
-  }, [isSignedIn, user]);
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        setWorkerId(session.user.id);
+      } else {
+        router.push('/login');
+      }
+      setLoading(false);
+    });
+  }, []);
 
   useEffect(() => {
     if (workerId) {
@@ -34,19 +39,6 @@ export default function WorkerPage() {
       else fetchMyOrders();
     }
   }, [workerId, activeTab]);
-
-  async function fetchWorkerId() {
-    const { data } = await supabase
-      .from('users')
-      .select('id')
-      .eq('clerk_id', user?.id)
-      .single();
-    
-    if (data) {
-      setWorkerId(data.id);
-    }
-    setLoading(false);
-  }
 
   async function fetchFeedOrders() {
     const { data } = await supabase
@@ -111,19 +103,21 @@ export default function WorkerPage() {
     }
   }
 
-  if (!isSignedIn) {
-    return (
-      <div className="p-8 text-center">
-        <h1 className="text-2xl font-bold">PROJECT X — Исполнитель</h1>
-        <p className="mt-2">Войдите, чтобы видеть заказы</p>
-      </div>
-    );
-  }
-
   if (loading) return <div className="p-4">Загрузка...</div>;
+  if (!workerId) return null;
 
   return (
     <div className="max-w-4xl mx-auto p-4">
+      <div className="flex justify-between items-center mb-4">
+        <h1 className="text-2xl font-bold">PROJECT X - Исполнитель</h1>
+        <button
+          onClick={() => supabase.auth.signOut()}
+          className="bg-red-600 text-white px-4 py-2 rounded"
+        >
+          Выйти
+        </button>
+      </div>
+
       <div className="flex gap-4 mb-6 border-b">
         <button
           onClick={() => setActiveTab('feed')}
