@@ -164,6 +164,7 @@ export default function WorkerPage() {
       price_offer: parseInt(priceOffer),
       comment: comment || '',
       status: 'pending',
+      worker_status: 'pending',
       hold_amount: reserveAmount
     }]);
     
