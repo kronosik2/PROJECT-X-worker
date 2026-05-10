@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
-import Link from 'next/link';
 import AuthModal from '@/components/AuthModal';
 
 export default function WorkerPage() {
@@ -86,11 +85,17 @@ export default function WorkerPage() {
     setResponding(orderId);
     
     // Получаем цену заказа
-    const { data: order } = await supabase
+    const { data: order, error: orderError } = await supabase
       .from('orders')
       .select('price')
       .eq('id', orderId)
       .single();
+    
+    if (orderError || !order) {
+      alert('Ошибка получения заказа');
+      setResponding(null);
+      return;
+    }
     
     const holdAmount = Math.max(Math.ceil(order.price * 0.1), 200);
     
@@ -249,7 +254,17 @@ export default function WorkerPage() {
                   </div>
                   
                   <div className="space-y-2 text-sm">
-                    <p className="text-gray-600">📍 {order.address}, {order.city}</p>
+                    <p className="text-gray-600">
+                      📍 
+                      <a 
+                        href={`https://yandex.ru/maps/?text=${order.address}, ${order.city}`} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:underline ml-1"
+                      >
+                        {order.address}, {order.city}
+                      </a>
+                    </p>
                     <p className="text-gray-600">👥 Требуется: {order.workers_count} чел.</p>
                     <p className="text-gray-600">💰 Бюджет: {order.price} ₽</p>
                     <p className="text-gray-500 text-xs">📅 {new Date(order.time_slot).toLocaleString()}</p>
@@ -332,7 +347,17 @@ export default function WorkerPage() {
                     </div>
                     
                     <div className="space-y-2 text-sm">
-                      <p className="text-gray-600">📍 {order.address}, {order.city}</p>
+                      <p className="text-gray-600">
+                        📍 
+                        <a 
+                          href={`https://yandex.ru/maps/?text=${order.address}, ${order.city}`} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-blue-600 hover:underline ml-1"
+                        >
+                          {order.address}, {order.city}
+                        </a>
+                      </p>
                       <p className="text-gray-600">💰 Ваша цена: {item.price_offer} ₽</p>
                       {item.comment && <p className="text-gray-500 text-sm">💬 {item.comment}</p>}
                     </div>
