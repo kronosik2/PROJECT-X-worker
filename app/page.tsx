@@ -12,7 +12,10 @@ export default function WorkerPage() {
   const [feedOrders, setFeedOrders] = useState<any[]>([]);
   const [myOrders, setMyOrders] = useState<any[]>([]);
   const [balance, setBalance] = useState(0);
+  const [reserved, setReserved] = useState(0);
   const [responding, setResponding] = useState<string | null>(null);
+  const [activeResponses, setActiveResponses] = useState(0);
+  const [activeOrders, setActiveOrders] = useState(0);
 
   useEffect(() => {
     const saved = localStorage.getItem('worker_id');
@@ -21,7 +24,10 @@ export default function WorkerPage() {
         .then(({ data }) => {
           if (data) {
             setWorker(data);
-            setBalance((data.balance || 0) - (data.reserved || 0));
+            setBalance(data.balance || 0);
+            setReserved(data.reserved || 0);
+            setActiveResponses(data.active_responses || 0);
+            setActiveOrders(data.active_orders || 0);
             loadFeedOrders();
             loadMyOrders(data.id);
           }
@@ -50,6 +56,7 @@ export default function WorkerPage() {
         status,
         price_offer,
         comment,
+        hold_amount,
         created_at,
         order:orders (
           id,
@@ -78,9 +85,19 @@ export default function WorkerPage() {
   async function respondToOrder(orderId: string, workersCount: number) {
     if (!worker) return;
     
+    // Проверка лимитов
+    if (activeResponses >= 3) {
+      alert('❌ Вы уже откликнулись на 3 заказа. Дождитесь ответа клиента.');
+      return;
+    }
+    if (activeOrders >= 1) {
+      alert('❌ У вас уже есть активный заказ. Завершите его, чтобы взять новый.');
+      return;
+    }
+    
     setResponding(orderId);
     
-    // Получаем цену заказа через отдельный запрос
+    // Получаем заказ
     const { data: order, error: orderError } = await supabase
       .from('orders')
       .select('price, workers_count')
@@ -93,18 +110,23 @@ export default function WorkerPage() {
       return;
     }
     
-    // Простой расчёт резерва
+    // Стоимость за одного человека
     const pricePerPerson = order.price / (order.workers_count || 1);
+    // Резерв за одного человека (10%, мин. 200₽)
     const reservePerPerson = Math.max(Math.ceil(pricePerPerson * 0.1), 200);
+    // Общий резерв за выбранное количество человек
     const totalReserve = reservePerPerson * workersCount;
     
-    if (balance < totalReserve) {
-      alert(`Недостаточно средств. Нужно ${totalReserve}₽`);
+    // Доступные средства (баланс - уже зарезервированные)
+    const availableBalance = balance - reserved;
+    
+    if (availableBalance < totalReserve) {
+      alert(`❌ Недостаточно средств. Доступно: ${availableBalance}₽, нужно: ${totalReserve}₽`);
       setResponding(null);
       return;
     }
     
-    const priceOffer = prompt('Ваша цена (₽):', order.price.toString());
+    const priceOffer = prompt(`Ваша цена за ${workersCount} чел. (₽):`, (pricePerPerson * workersCount).toString());
     if (!priceOffer) {
       setResponding(null);
       return;
@@ -112,8 +134,8 @@ export default function WorkerPage() {
     
     const comment = prompt('Комментарий (необязательно):');
     
-    // Прямая вставка отклика через insert
-    const { error } = await supabase
+    // Создаём отклик
+    const { error: insertError } = await supabase
       .from('responses')
       .insert({
         order_id: orderId,
@@ -121,35 +143,38 @@ export default function WorkerPage() {
         price_offer: parseInt(priceOffer),
         comment: comment || '',
         hold_amount: totalReserve,
-        status: 'pending'
+        status: 'pending',
+        workers_count: workersCount
       });
     
-    if (error) {
-      alert('Ошибка: ' + error.message);
-    } else {
-      // Обновляем резерв в workers
-      await supabase
-        .from('workers')
-        .update({ reserved: (worker.reserved || 0) + totalReserve })
-        .eq('id', worker.id);
-      
-      alert(`✅ Отклик отправлен! Зарезервировано ${totalReserve}₽`);
-      
-      // Обновляем данные
-      const { data: updated } = await supabase
-        .from('workers')
-        .select('balance, reserved')
-        .eq('id', worker.id)
-        .single();
-      if (updated) {
-        setWorker({ ...worker, ...updated });
-        setBalance(updated.balance - updated.reserved);
-      }
-      
-      await loadFeedOrders();
-      await loadMyOrders(worker.id);
+    if (insertError) {
+      alert('Ошибка: ' + insertError.message);
+      setResponding(null);
+      return;
     }
     
+    // Обновляем резерв и счётчики
+    const newReserved = (worker.reserved || 0) + totalReserve;
+    const newActiveResponses = activeResponses + 1;
+    
+    await supabase
+      .from('workers')
+      .update({ 
+        reserved: newReserved,
+        active_responses: newActiveResponses,
+        responses_count: (worker.responses_count || 0) + 1
+      })
+      .eq('id', worker.id);
+    
+    alert(`✅ Отклик отправлен! Зарезервировано ${totalReserve}₽ (${workersCount} чел.)`);
+    
+    // Обновляем локальное состояние
+    setWorker({ ...worker, reserved: newReserved });
+    setReserved(newReserved);
+    setActiveResponses(newActiveResponses);
+    
+    await loadFeedOrders();
+    await loadMyOrders(worker.id);
     setResponding(null);
   }
 
@@ -163,6 +188,22 @@ export default function WorkerPage() {
       .from('orders')
       .update({ status: 'confirmed' })
       .eq('id', orderId);
+    
+    // Обновляем счётчики
+    const newActiveResponses = activeResponses - 1;
+    const newActiveOrders = activeOrders + 1;
+    
+    await supabase
+      .from('workers')
+      .update({ 
+        active_responses: newActiveResponses,
+        active_orders: newActiveOrders,
+        orders_count: (worker.orders_count || 0) + 1
+      })
+      .eq('id', worker.id);
+    
+    setActiveResponses(newActiveResponses);
+    setActiveOrders(newActiveOrders);
     
     alert('✅ Заказ подтверждён!');
     await loadMyOrders(worker.id);
@@ -181,11 +222,18 @@ export default function WorkerPage() {
     
     if (order) {
       // Зачисляем деньги исполнителю
+      const newBalance = (worker.balance || 0) + order.price;
+      const newReserved = (worker.reserved || 0) - (worker.reserved || 0);
+      const newActiveOrders = activeOrders - 1;
+      
       await supabase
         .from('workers')
         .update({ 
-          balance: (worker.balance || 0) + order.price,
-          reserved: (worker.reserved || 0) - (worker.reserved || 0)
+          balance: newBalance,
+          reserved: newReserved,
+          active_orders: newActiveOrders,
+          completed_count: (worker.completed_count || 0) + 1,
+          total_earned: (worker.total_earned || 0) + order.price
         })
         .eq('id', worker.id);
       
@@ -199,18 +247,12 @@ export default function WorkerPage() {
         .update({ status: 'completed' })
         .eq('id', orderId);
       
-      alert('✅ Заказ завершён! Средства зачислены');
+      setBalance(newBalance);
+      setReserved(0);
+      setActiveOrders(newActiveOrders);
+      setWorker({ ...worker, balance: newBalance, reserved: 0 });
       
-      // Обновляем данные
-      const { data: updated } = await supabase
-        .from('workers')
-        .select('balance, reserved')
-        .eq('id', worker.id)
-        .single();
-      if (updated) {
-        setWorker({ ...worker, ...updated });
-        setBalance(updated.balance - updated.reserved);
-      }
+      alert(`✅ Заказ завершён! Зачислено ${order.price}₽`);
     }
     
     await loadMyOrders(worker.id);
@@ -219,7 +261,10 @@ export default function WorkerPage() {
 
   function handleLogin(worker: any) {
     setWorker(worker);
-    setBalance((worker.balance || 0) - (worker.reserved || 0));
+    setBalance(worker.balance || 0);
+    setReserved(worker.reserved || 0);
+    setActiveResponses(worker.active_responses || 0);
+    setActiveOrders(worker.active_orders || 0);
     setShowAuthModal(false);
     loadFeedOrders();
     loadMyOrders(worker.id);
@@ -246,8 +291,15 @@ export default function WorkerPage() {
                 <p className="text-gray-600">{worker.name}</p>
               </div>
               <div className="text-right">
-                <p className="text-sm text-gray-600">💰 Доступно</p>
+                <p className="text-sm text-gray-600">💰 Баланс</p>
                 <p className="text-2xl font-bold text-blue-600">{balance} ₽</p>
+                <p className="text-xs text-gray-500">Зарезервировано: {reserved} ₽</p>
+                <p className="text-xs text-gray-500">Доступно: {balance - reserved} ₽</p>
+              </div>
+              <div className="text-right">
+                <p className="text-sm text-gray-600">📊 Лимиты</p>
+                <p className="text-sm">Отклики: {activeResponses}/3</p>
+                <p className="text-sm">Активных заказов: {activeOrders}/1</p>
               </div>
               <button
                 onClick={handleLogout}
@@ -280,40 +332,47 @@ export default function WorkerPage() {
                   <p className="text-gray-500">Нет доступных заказов</p>
                 </div>
               )}
-              {feedOrders.map((order) => (
-                <div key={order.id} className="bg-white rounded-xl p-5 shadow-sm border">
-                  <h3 className="font-bold text-lg">{order.title}</h3>
-                  <p className="text-gray-600 text-sm mt-1">{order.description}</p>
-                  <p className="text-sm text-gray-500 mt-2">
-                    <a 
-                      href={`https://yandex.ru/maps/?text=${order.address}, ${order.city}`} 
-                      target="_blank" 
-                      className="text-blue-600 hover:underline"
-                    >
-                      📍 {order.address}, {order.city}
-                    </a>
-                  </p>
-                  <p className="text-sm text-gray-600 mt-1">👥 {order.workers_count || 1} чел.</p>
-                  <p className="text-xl font-bold text-blue-600 mt-2">{order.price} ₽</p>
-                  
-                  <div className="flex gap-3 mt-4">
-                    <button
-                      onClick={() => respondToOrder(order.id, 1)}
-                      disabled={responding === order.id}
-                      className="flex-1 bg-green-600 text-white py-2 rounded-lg disabled:opacity-50"
-                    >
-                      🚶 Еду один
-                    </button>
-                    <button
-                      onClick={() => respondToOrder(order.id, 2)}
-                      disabled={responding === order.id}
-                      className="flex-1 bg-blue-600 text-white py-2 rounded-lg disabled:opacity-50"
-                    >
-                      👥 Еду с напарником
-                    </button>
+              {feedOrders.map((order) => {
+                const pricePerPerson = order.price / (order.workers_count || 1);
+                const reservePerPerson = Math.max(Math.ceil(pricePerPerson * 0.1), 200);
+                
+                return (
+                  <div key={order.id} className="bg-white rounded-xl p-5 shadow-sm border">
+                    <h3 className="font-bold text-lg">{order.title}</h3>
+                    <p className="text-gray-600 text-sm mt-1">{order.description}</p>
+                    <p className="text-sm text-gray-500 mt-2">
+                      <a 
+                        href={`https://yandex.ru/maps/?text=${order.address}, ${order.city}`} 
+                        target="_blank" 
+                        className="text-blue-600 hover:underline"
+                      >
+                        📍 {order.address}, {order.city}
+                      </a>
+                    </p>
+                    <p className="text-sm text-gray-600 mt-1">👥 Требуется: {order.workers_count || 1} чел.</p>
+                    <p className="text-sm text-gray-600">💰 Общий бюджет: {order.price} ₽</p>
+                    <p className="text-sm text-gray-500">💰 За 1 человека: {pricePerPerson} ₽</p>
+                    <p className="text-sm text-gray-500">🔒 Резерв за 1 чел: {reservePerPerson} ₽</p>
+                    
+                    <div className="flex gap-3 mt-4">
+                      <button
+                        onClick={() => respondToOrder(order.id, 1)}
+                        disabled={responding === order.id}
+                        className="flex-1 bg-green-600 text-white py-2 rounded-lg disabled:opacity-50"
+                      >
+                        🚶 Еду один ({reservePerPerson}₽ резерв)
+                      </button>
+                      <button
+                        onClick={() => respondToOrder(order.id, 2)}
+                        disabled={responding === order.id}
+                        className="flex-1 bg-blue-600 text-white py-2 rounded-lg disabled:opacity-50"
+                      >
+                        👥 Еду с напарником ({reservePerPerson * 2}₽ резерв)
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -331,8 +390,19 @@ export default function WorkerPage() {
                 let statusText = '', statusClass = '', buttons = null;
                 
                 if (item.status === 'pending') {
-                  statusText = '⏳ Ожидает ответа';
+                  statusText = '⏳ На рассмотрении';
                   statusClass = 'status-pending';
+                } else if (item.status === 'approved') {
+                  statusText = '✅ Выбран клиентом! Подтвердите';
+                  statusClass = 'status-approved';
+                  buttons = (
+                    <button
+                      onClick={() => confirmOrder(item.id, order.id)}
+                      className="bg-green-600 text-white px-4 py-2 rounded-lg"
+                    >
+                      Подтвердить заказ
+                    </button>
+                  );
                 } else if (item.status === 'confirmed') {
                   statusText = '🚚 В работе';
                   statusClass = 'status-confirmed';
@@ -341,12 +411,15 @@ export default function WorkerPage() {
                       onClick={() => completeOrder(item.id, order.id)}
                       className="bg-blue-600 text-white px-4 py-2 rounded-lg"
                     >
-                      Завершить
+                      Завершить заказ
                     </button>
                   );
                 } else if (item.status === 'completed') {
                   statusText = '✅ Выполнен';
                   statusClass = 'status-completed';
+                } else if (item.status === 'rejected') {
+                  statusText = '❌ Отклонён';
+                  statusClass = 'status-cancelled';
                 }
                 
                 return (
@@ -360,7 +433,9 @@ export default function WorkerPage() {
                         📍 {order.address}, {order.city}
                       </a>
                     </p>
-                    <p className="text-sm text-gray-600 mt-1">💰 {item.price_offer} ₽</p>
+                    <p className="text-sm text-gray-600 mt-1">💰 Ваша цена: {item.price_offer} ₽</p>
+                    <p className="text-sm text-gray-600">🔒 Зарезервировано: {item.hold_amount} ₽</p>
+                    {item.comment && <p className="text-sm text-gray-500">💬 {item.comment}</p>}
                     {buttons && <div className="mt-3">{buttons}</div>}
                   </div>
                 );
