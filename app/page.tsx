@@ -84,10 +84,11 @@ export default function WorkerPage() {
       .from('responses')
       .select(`
         id,
-        worker_status,
+        status,
         price_offer,
         comment,
         created_at,
+        hold_amount,
         orders (
           id,
           address,
@@ -106,15 +107,26 @@ export default function WorkerPage() {
     if (!error && data) {
       const formatted = data.map((r: any) => ({
         id: r.id,
-        worker_status: r.worker_status,
+        worker_status: r.status,
         price_offer: r.price_offer,
         comment: r.comment,
         created_at: r.created_at,
-        order: r.orders
+        order: r.orders,
+        hold_amount: r.hold_amount
       }));
       setMyOrders(formatted);
     }
     setLoadingMy(false);
+  };
+
+  const getReserveAmount = (order: any) => {
+    let orderPrice = 0;
+    if (order.tariff === 'fixed') {
+      orderPrice = order.fixed_budget;
+    } else {
+      orderPrice = order.hourly_rate * 4;
+    }
+    return Math.max(Math.ceil(orderPrice * 0.1), 10);
   };
 
   const respondToOrder = async (orderId: string) => {
@@ -123,8 +135,18 @@ export default function WorkerPage() {
       alert(`❌ Вы уже откликнулись на ${MAX_ACTIVE_RESPONSES} заказов`);
       return;
     }
-    if (balance < 10) {
-      alert('❌ Недостаточно средств (нужно 10₽ для резерва)');
+
+    // Получаем цену заказа
+    const { data: order } = await supabase
+      .from('orders')
+      .select('fixed_budget, hourly_rate, tariff')
+      .eq('id', orderId)
+      .single();
+    
+    const reserveAmount = getReserveAmount(order);
+    
+    if (balance < reserveAmount) {
+      alert(`❌ Недостаточно средств (нужно ${reserveAmount}₽ для резерва)`);
       return;
     }
     
@@ -141,24 +163,24 @@ export default function WorkerPage() {
       worker_rating: worker.rating,
       price_offer: parseInt(priceOffer),
       comment: comment || '',
-      worker_status: 'pending',
-      status: 'pending'
+      status: 'pending',
+      hold_amount: reserveAmount
     }]);
     
     setResponding(null);
     if (error) {
       alert('Ошибка: ' + error.message);
     } else {
-      alert('✅ Отклик отправлен! 10₽ зарезервировано');
+      alert(`✅ Отклик отправлен! ${reserveAmount}₽ зарезервировано`);
       await loadBalance(worker.id);
       await loadActiveResponsesCount(worker.id);
-      await loadOrders();      // обновляем ленту (заказ пропадёт)
-      await loadMyOrders();    // обновляем мои заказы (заказ появится)
+      await loadOrders();
+      await loadMyOrders();
     }
   };
 
   const confirmOrder = async (responseId: string, orderId: string) => {
-    await supabase.from('responses').update({ worker_status: 'confirmed' }).eq('id', responseId);
+    await supabase.from('responses').update({ status: 'confirmed' }).eq('id', responseId);
     await supabase.from('orders').update({ status: 'in_progress' }).eq('id', orderId);
     alert('✅ Заказ подтверждён! Приступайте к работе');
     await loadMyOrders();
@@ -167,7 +189,7 @@ export default function WorkerPage() {
 
   const completeOrder = async (responseId: string, orderId: string) => {
     if (!confirm('Завершить заказ? Клиент получит уведомление')) return;
-    await supabase.from('responses').update({ worker_status: 'completed' }).eq('id', responseId);
+    await supabase.from('responses').update({ status: 'completed' }).eq('id', responseId);
     await supabase.from('orders').update({ status: 'completed' }).eq('id', orderId);
     alert('✅ Заказ завершён! Спасибо за работу');
     await loadActiveResponsesCount(worker.id);
@@ -177,7 +199,7 @@ export default function WorkerPage() {
 
   const cancelOrder = async (responseId: string, orderId: string) => {
     if (!confirm('Отменить заказ? Деньги вернутся на баланс')) return;
-    await supabase.from('responses').update({ worker_status: 'cancelled' }).eq('id', responseId);
+    await supabase.from('responses').update({ status: 'cancelled' }).eq('id', responseId);
     await supabase.from('orders').update({ status: 'open' }).eq('id', orderId);
     alert('❌ Заказ отменён, деньги возвращены');
     await loadActiveResponsesCount(worker.id);
@@ -302,19 +324,22 @@ export default function WorkerPage() {
           <button onClick={loadOrders} style={{ marginBottom: '20px', padding: '8px 20px', background: '#e2e8f0', border: 'none', borderRadius: '40px', cursor: 'pointer' }}>🔄 Обновить</button>
           {loading && <p>⏳ Загрузка...</p>}
           {!loading && orders.length === 0 && <p style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>🤷 Нет открытых заказов</p>}
-          {orders.map(order => (
-            <div key={order.id} style={{ background: 'white', borderRadius: '24px', padding: '20px', marginBottom: '16px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)', border: '1px solid #e2e8f0' }}>
-              <h3 style={{ marginBottom: '8px' }}>📍 {order.address}</h3>
-              <p style={{ color: '#475569', marginBottom: '12px' }}>{order.work_description}</p>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', marginBottom: '16px' }}>
-                <span style={{ background: '#f1f5f9', padding: '4px 12px', borderRadius: '40px', fontSize: '14px' }}>{order.tariff === 'hourly' ? `💰 ${order.hourly_rate} ₽/час` : `💰 Фиксированный: ${order.fixed_budget} ₽`}</span>
-                <span style={{ background: '#f1f5f9', padding: '4px 12px', borderRadius: '40px', fontSize: '14px' }}>📅 {new Date(order.time_slot).toLocaleString()}</span>
+          {orders.map(order => {
+            const reserveAmount = getReserveAmount(order);
+            return (
+              <div key={order.id} style={{ background: 'white', borderRadius: '24px', padding: '20px', marginBottom: '16px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)', border: '1px solid #e2e8f0' }}>
+                <h3 style={{ marginBottom: '8px' }}>📍 {order.address}</h3>
+                <p style={{ color: '#475569', marginBottom: '12px' }}>{order.work_description}</p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', marginBottom: '16px' }}>
+                  <span style={{ background: '#f1f5f9', padding: '4px 12px', borderRadius: '40px', fontSize: '14px' }}>{order.tariff === 'hourly' ? `💰 ${order.hourly_rate} ₽/час` : `💰 Фиксированный: ${order.fixed_budget} ₽`}</span>
+                  <span style={{ background: '#f1f5f9', padding: '4px 12px', borderRadius: '40px', fontSize: '14px' }}>📅 {new Date(order.time_slot).toLocaleString()}</span>
+                </div>
+                <button onClick={() => respondToOrder(order.id)} disabled={responding === order.id || activeResponsesCount >= MAX_ACTIVE_RESPONSES || balance < reserveAmount} style={{ padding: '10px 20px', background: '#0f172a', color: 'white', border: 'none', borderRadius: '40px', cursor: (responding === order.id || activeResponsesCount >= MAX_ACTIVE_RESPONSES || balance < reserveAmount) ? 'not-allowed' : 'pointer', opacity: (responding === order.id || activeResponsesCount >= MAX_ACTIVE_RESPONSES || balance < reserveAmount) ? 0.5 : 1 }}>
+                  {responding === order.id ? 'Отправка...' : balance < reserveAmount ? `💰 Недостаточно средств (${reserveAmount}₽)` : `💬 Откликнуться (${reserveAmount}₽)`}
+                </button>
               </div>
-              <button onClick={() => respondToOrder(order.id)} disabled={responding === order.id || activeResponsesCount >= MAX_ACTIVE_RESPONSES || balance < 10} style={{ padding: '10px 20px', background: '#0f172a', color: 'white', border: 'none', borderRadius: '40px', cursor: (responding === order.id || activeResponsesCount >= MAX_ACTIVE_RESPONSES || balance < 10) ? 'not-allowed' : 'pointer', opacity: (responding === order.id || activeResponsesCount >= MAX_ACTIVE_RESPONSES || balance < 10) ? 0.5 : 1 }}>
-                {responding === order.id ? 'Отправка...' : balance < 10 ? '💰 Недостаточно средств (10₽)' : '💬 Откликнуться (10₽)'}
-              </button>
-            </div>
-          ))}
+            );
+          })}
         </>
       )}
 
