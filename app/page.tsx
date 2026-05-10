@@ -72,7 +72,34 @@ export default function WorkerPage() {
     
     setResponding(orderId);
     
-    const priceOffer = prompt('Ваша цена (₽):');
+    // Получаем заказ
+    const { data: order, error: orderError } = await supabase
+      .from('orders')
+      .select('price, workers_count')
+      .eq('id', orderId)
+      .single();
+    
+    if (orderError || !order) {
+      alert('Ошибка получения заказа');
+      setResponding(null);
+      return;
+    }
+    
+    // Стоимость за одного человека
+    const pricePerPerson = order.price / (order.workers_count || 1);
+    // Резерв за одного человека (10%, мин. 200₽)
+    const reservePerPerson = Math.max(Math.ceil(pricePerPerson * 0.1), 200);
+    // Общий резерв за выбранное количество человек
+    const totalReserve = reservePerPerson * workersCount;
+    
+    // Проверяем баланс
+    if (balance < totalReserve) {
+      alert(`❌ Недостаточно средств. Нужно ${totalReserve}₽ для резерва (${workersCount} чел. × ${reservePerPerson}₽)`);
+      setResponding(null);
+      return;
+    }
+    
+    const priceOffer = prompt(`Ваша цена за ${workersCount} чел. (₽):`, (pricePerPerson * workersCount).toString());
     if (!priceOffer) {
       setResponding(null);
       return;
@@ -84,7 +111,8 @@ export default function WorkerPage() {
       p_order_id: orderId,
       p_worker_id: worker.id,
       p_price_offer: parseInt(priceOffer),
-      p_comment: comment || ''
+      p_comment: comment || '',
+      p_workers_count: workersCount
     });
     
     setResponding(null);
@@ -94,7 +122,7 @@ export default function WorkerPage() {
     } else if (data && data.success === false) {
       alert(data.error);
     } else {
-      alert(`✅ Отклик отправлен! Зарезервировано ${data?.hold_amount || '?'}₽`);
+      alert(`✅ Отклик отправлен! Зарезервировано ${totalReserve}₽ (${workersCount} чел.)`);
       // Обновляем баланс
       const { data: updated } = await supabase
         .from('workers')
