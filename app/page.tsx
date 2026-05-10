@@ -21,7 +21,7 @@ export default function WorkerPage() {
         .then(({ data }) => {
           if (data) {
             setWorker(data);
-            setBalance(data.balance || 0);
+            setBalance((data.balance || 0) - (data.reserved || 0));
             loadFeedOrders();
             loadMyOrders(data.id);
           }
@@ -43,28 +43,16 @@ export default function WorkerPage() {
   }
 
   async function loadMyOrders(workerId: string) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('responses')
-      .select(`
-        id,
-        status,
-        price_offer,
-        comment,
-        created_at,
-        order:orders (
-          id,
-          title,
-          description,
-          address,
-          city,
-          price,
-          workers_count,
-          status as order_status,
-          client_id
-        )
-      `)
+      .select('*, order:orders(*)')
       .eq('worker_id', workerId)
       .order('created_at', { ascending: false });
+    
+    if (error) {
+      console.error('Ошибка загрузки откликов:', error);
+      return;
+    }
     
     if (data) {
       const formatted = data.map((r: any) => ({
@@ -84,28 +72,7 @@ export default function WorkerPage() {
     
     setResponding(orderId);
     
-    // Получаем цену заказа
-    const { data: order, error: orderError } = await supabase
-      .from('orders')
-      .select('price')
-      .eq('id', orderId)
-      .single();
-    
-    if (orderError || !order) {
-      alert('Ошибка получения заказа');
-      setResponding(null);
-      return;
-    }
-    
-    const holdAmount = Math.max(Math.ceil(order.price * 0.1), 200);
-    
-    if (balance < holdAmount) {
-      alert(`❌ Недостаточно средств. Нужно ${holdAmount}₽ для резерва`);
-      setResponding(null);
-      return;
-    }
-    
-    const priceOffer = prompt('Ваша цена (₽):', order.price.toString());
+    const priceOffer = prompt('Ваша цена (₽):');
     if (!priceOffer) {
       setResponding(null);
       return;
@@ -113,7 +80,7 @@ export default function WorkerPage() {
     
     const comment = prompt('Комментарий для клиента (необязательно):');
     
-    const { error } = await supabase.rpc('respond_to_order', {
+    const { data, error } = await supabase.rpc('respond_to_order', {
       p_order_id: orderId,
       p_worker_id: worker.id,
       p_price_offer: parseInt(priceOffer),
@@ -124,15 +91,19 @@ export default function WorkerPage() {
     
     if (error) {
       alert('Ошибка: ' + error.message);
+    } else if (data && data.success === false) {
+      alert(data.error);
     } else {
-      alert(`✅ Отклик отправлен! Зарезервировано ${holdAmount}₽`);
+      alert(`✅ Отклик отправлен! Зарезервировано ${data?.hold_amount || '?'}₽`);
       // Обновляем баланс
       const { data: updated } = await supabase
         .from('workers')
-        .select('balance')
+        .select('balance, reserved')
         .eq('id', worker.id)
         .single();
-      setBalance(updated?.balance || 0);
+      if (updated) {
+        setBalance(updated.balance - updated.reserved);
+      }
       await loadFeedOrders();
       await loadMyOrders(worker.id);
     }
@@ -168,10 +139,12 @@ export default function WorkerPage() {
       alert('✅ Заказ завершён! Средства зачислены');
       const { data: updated } = await supabase
         .from('workers')
-        .select('balance')
+        .select('balance, reserved')
         .eq('id', worker.id)
         .single();
-      setBalance(updated?.balance || 0);
+      if (updated) {
+        setBalance(updated.balance - updated.reserved);
+      }
       await loadMyOrders(worker.id);
       await loadFeedOrders();
     }
@@ -179,7 +152,7 @@ export default function WorkerPage() {
 
   function handleLogin(worker: any) {
     setWorker(worker);
-    setBalance(worker.balance || 0);
+    setBalance((worker.balance || 0) - (worker.reserved || 0));
     setShowAuthModal(false);
     loadFeedOrders();
     loadMyOrders(worker.id);
@@ -207,8 +180,9 @@ export default function WorkerPage() {
                 <p className="text-gray-600">Исполнитель: {worker.name}</p>
               </div>
               <div className="text-right">
-                <p className="text-sm text-gray-600">💰 Баланс</p>
+                <p className="text-sm text-gray-600">💰 Доступно</p>
                 <p className="text-2xl font-bold text-blue-600">{balance} ₽</p>
+                <p className="text-xs text-gray-500">Зарезервировано: {worker.reserved || 0} ₽</p>
               </div>
               <button
                 onClick={handleLogout}
@@ -265,7 +239,7 @@ export default function WorkerPage() {
                         {order.address}, {order.city}
                       </a>
                     </p>
-                    <p className="text-gray-600">👥 Требуется: {order.workers_count} чел.</p>
+                    <p className="text-gray-600">👥 Требуется: {order.workers_count || 1} чел.</p>
                     <p className="text-gray-600">💰 Бюджет: {order.price} ₽</p>
                     <p className="text-gray-500 text-xs">📅 {new Date(order.time_slot).toLocaleString()}</p>
                   </div>
@@ -301,6 +275,8 @@ export default function WorkerPage() {
               )}
               {myOrders.map((item) => {
                 const order = item.order;
+                if (!order) return null;
+                
                 let statusText = '', statusClass = '', buttons = null;
                 
                 if (item.status === 'pending') {
