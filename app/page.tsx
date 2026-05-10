@@ -221,9 +221,9 @@ export default function WorkerPage() {
     
     if (error) alert('Ошибка: ' + error.message);
     else {
-      await supabase.from('wallets').insert([{ worker_id: newWorker.id, balance: 100, reserved: 0 }]);
+      await supabase.from('wallets').insert([{ worker_id: newWorker.id, balance: 500, reserved: 0 }]);
       setWorker(newWorker);
-      setBalance(100);
+      setBalance(500);
       setShowRegisterForm(false);
       setRegisterName('');
       setRegisterAge('');
